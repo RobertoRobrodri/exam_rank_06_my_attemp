@@ -15,6 +15,26 @@ typedef struct user {
 	struct user *next;
 }	user;
 
+char *str_join(char *buf, char *add)
+{
+        char    *newbuf;
+        int             len;
+
+        if (buf == 0)
+            len = 0;
+        else
+            len = strlen(buf);
+        newbuf = malloc(sizeof(*newbuf) * (len + strlen(add) + 1));
+        if (newbuf == 0)
+            return (0);
+        newbuf[0] = 0;
+        if (buf != 0)
+            strcat(newbuf, buf);
+        strcat(newbuf, add);
+        return (newbuf);
+}
+
+
 // list functions
 user *lstnew(int fd, int id)
 {
@@ -110,9 +130,35 @@ void free_list(user **lst)
 }
 
 // utils
+int extract_message(char **buf, char **msg)
+{
+    char    *newbuf;
+    int i;
+    *msg = 0;
+    if (*buf == 0)
+        return (0);
+    i = 0;
+    while ((*buf)[i])
+    {
+        if ((*buf)[i] == '\n')
+        {
+            newbuf = calloc(1, sizeof(*newbuf) * (strlen(*buf + i + 1) + 1));
+            if (newbuf == 0)
+                return (-1);
+            strcpy(newbuf, *buf + i + 1);
+            *msg = *buf;
+            (*msg)[i + 1] = 0;
+            *buf = newbuf;
+            return (1);
+        }
+        i++;
+    }
+    return (0);
+}
+
 void throw_error(char *str)
 {
-	write(1, str, strlen(str));
+	write(2, str, strlen(str));
 }
 
 struct sockaddr_in init_socket_struct(int port) {
@@ -141,18 +187,21 @@ fd_set init_fd_set(int socket_fd)
 
 // IRC
 
-int send_msg_to_all(char *msg, user *client_list)
+int send_msg_to_all(char *msg, user *client_list, int fd)
 {
 	int len;
 	user *aux = client_list;
 
 	while (aux != NULL)
 	{
-		len = send(aux->fd, msg, strlen(msg), 0);
-		if (len == -1)
+		if (aux->fd != fd)
 		{
-			throw_error("Fatal error\n");
-			return 1;
+			len = send(aux->fd, msg, strlen(msg), 0);
+			if (len == -1)
+			{
+				throw_error("Fatal error\n");
+				return 1;
+			}
 		}
 		aux = aux->next;
 	}
@@ -169,8 +218,8 @@ int main_loop(int socket_fd)
 	client_sockets = init_fd_set(socket_fd);
 	while (1)
 	{
-		char buffer[20000];
-		memset(buffer, 0, 20000);
+		char buffer[200000];
+		memset(buffer, 0, 200000);
 
 		ready_sockets = client_sockets;
 		if (select(max_fd + 1, &ready_sockets, NULL, NULL, NULL) < 0)
@@ -195,7 +244,7 @@ int main_loop(int socket_fd)
 					FD_SET(new_fd, &client_sockets);
 					lst_add_back(&client_list, lstnew(new_fd, id));
 					sprintf(buffer, "server: client %d just arrived\n", id++);
-					if (send_msg_to_all(buffer, client_list))
+					if (send_msg_to_all(buffer, client_list, new_fd))
 					{
 						free_list(&client_list);
 						return 1;
@@ -208,7 +257,7 @@ int main_loop(int socket_fd)
 					
 					int len;
 
-					len = recv(i, buffer, 20000, 0);
+					len = recv(i, buffer, 200000, 0);
 					switch (len) {
 						case -1:
 						{
@@ -223,7 +272,7 @@ int main_loop(int socket_fd)
 							user *to_rmv = find_in_list(client_list, i);
 							sprintf(buffer, "server: client %d just left\n", to_rmv->id);
 							remove_from_list(&client_list, i);
-							if (send_msg_to_all(buffer, client_list))
+							if (send_msg_to_all(buffer, client_list, i))
 							{
 								free_list(&client_list);
 								return 1;
@@ -232,7 +281,13 @@ int main_loop(int socket_fd)
 						}
 						default:
 						{
-							if (send_msg_to_all(buffer, client_list) == 1)
+							user *sender = find_in_list(client_list, i);
+							char client_msg[2000000];
+
+							memset(&client_msg, 0, 200000);
+							sprintf(client_msg, "client %d: %s", sender->id, buffer);
+							char *str = str_join(client_msg, buffer);
+							if (send_msg_to_all(client_msg, client_list, i) == 1)
 							{
 								free_list(&client_list);
 								return 1;
