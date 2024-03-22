@@ -15,26 +15,6 @@ typedef struct user {
 	struct user *next;
 }	user;
 
-char *str_join(char *buf, char *add)
-{
-        char    *newbuf;
-        int             len;
-
-        if (buf == 0)
-            len = 0;
-        else
-            len = strlen(buf);
-        newbuf = malloc(sizeof(*newbuf) * (len + strlen(add) + 1));
-        if (newbuf == 0)
-            return (0);
-        newbuf[0] = 0;
-        if (buf != 0)
-            strcat(newbuf, buf);
-        strcat(newbuf, add);
-        return (newbuf);
-}
-
-
 // list functions
 user *lstnew(int fd, int id)
 {
@@ -124,6 +104,7 @@ void free_list(user **lst)
 	while(*lst != NULL)
 	{
 		aux = (*lst)->next;
+		close((*lst)->fd);
 		free(*lst);
 		*lst = aux;
 	}
@@ -225,6 +206,7 @@ int main_loop(int socket_fd)
 		if (select(max_fd + 1, &ready_sockets, NULL, NULL, NULL) < 0)
 		{
 			throw_error("Fatal error\n");
+			close(socket_fd);
 			return 1;
 		}
 		for (int i = 0; i <= max_fd; i++)
@@ -239,6 +221,7 @@ int main_loop(int socket_fd)
 					{
 						throw_error("Fatal error\n");
 						free_list(&client_list);
+						close(socket_fd);
 						return 1;
 					}
 					FD_SET(new_fd, &client_sockets);
@@ -247,6 +230,7 @@ int main_loop(int socket_fd)
 					if (send_msg_to_all(buffer, client_list, new_fd))
 					{
 						free_list(&client_list);
+						close(socket_fd);
 						return 1;
 					}
 					max_fd = new_fd > max_fd ? new_fd : max_fd;
@@ -275,6 +259,7 @@ int main_loop(int socket_fd)
 							if (send_msg_to_all(buffer, client_list, i))
 							{
 								free_list(&client_list);
+								close(socket_fd);
 								return 1;
 							}
 							break;
@@ -286,10 +271,10 @@ int main_loop(int socket_fd)
 
 							memset(&client_msg, 0, 200000);
 							sprintf(client_msg, "client %d: %s", sender->id, buffer);
-							char *str = str_join(client_msg, buffer);
 							if (send_msg_to_all(client_msg, client_list, i) == 1)
 							{
 								free_list(&client_list);
+								close(socket_fd);
 								return 1;
 							}
 						}
@@ -298,6 +283,7 @@ int main_loop(int socket_fd)
 			}
 		}
 	}
+	close(socket_fd);
 	return 0;
 }
 
