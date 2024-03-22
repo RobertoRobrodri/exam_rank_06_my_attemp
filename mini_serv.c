@@ -129,6 +129,8 @@ int extract_message(char **buf, char **msg)
             strcpy(newbuf, *buf + i + 1);
             *msg = *buf;
             (*msg)[i + 1] = 0;
+			if (*buf)
+				free(*buf);
             *buf = newbuf;
             return (1);
         }
@@ -280,11 +282,11 @@ int main_loop(int socket_fd)
 								{
 									free_list(&client_list);
 									close(socket_fd);
-									free(str);
+									free(ptr);
 									return 1;
 								}
-								free(str);
 							}
+							free(ptr);
 						}
 					}
 				}
