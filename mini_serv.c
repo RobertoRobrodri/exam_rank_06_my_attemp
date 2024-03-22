@@ -268,14 +268,22 @@ int main_loop(int socket_fd)
 						{
 							user *sender = find_in_list(client_list, i);
 							char client_msg[2000000];
+							char *str = NULL;
+							char *ptr = NULL;
 
 							memset(&client_msg, 0, 200000);
-							sprintf(client_msg, "client %d: %s", sender->id, buffer);
-							if (send_msg_to_all(client_msg, client_list, i) == 1)
+							ptr = buffer;
+							while (extract_message(&ptr, &str))
 							{
-								free_list(&client_list);
-								close(socket_fd);
-								return 1;
+								sprintf(client_msg, "client %d: %s", sender->id, str);
+								if (send_msg_to_all(client_msg, client_list, i) == 1)
+								{
+									free_list(&client_list);
+									close(socket_fd);
+									free(str);
+									return 1;
+								}
+								free(str);
 							}
 						}
 					}
