@@ -121,42 +121,14 @@ int	throw_error(char *str)
 	return 1;
 }
 
-// int extract_message(char **buf, char **msg)
-// {
-// 	char	*newbuf;
-// 	int	i;
-
-// 	*msg = 0;
-// 	if (*buf == 0)
-// 		return (0);
-// 	i = 0;
-// 	while ((*buf)[i])
-// 	{
-// 		if ((*buf)[i] == '\n')
-// 		{
-// 			newbuf = calloc(1, sizeof(*newbuf) * (strlen(*buf + i + 1) + 1));
-// 			if (newbuf == 0)
-// 				return (-1);
-// 			strcpy(newbuf, *buf + i + 1);
-// 			*msg = *buf;
-// 			(*msg)[i + 1] = 0;
-// 			*buf = newbuf;
-// 			return (1);
-// 		}
-// 		i++;
-// 	}
-// 	return (0);
-// }
-
-int send_msg_to_all(t_client *user_list, int fd, char *msg)
+int send_msg_to_all(t_client *user_list, int fd, char *msg, fd_set write_sockets)
 {
 	t_client *aux = user_list;
 
 	while (aux != NULL)
 	{
-		if (aux->fd != fd)
-			if (send(aux->fd, msg, strlen(msg), 0) == -1)
-				return 1;
+		if (aux->fd != fd && FD_ISSET(aux->fd, &write_sockets) > 0)
+			send(aux->fd, msg, strlen(msg), 0);
 		aux = aux->next;
 	}
 	return 0;
@@ -166,7 +138,7 @@ int send_msg_to_all(t_client *user_list, int fd, char *msg)
 
 int main_loop(int socket_fd)
 {
-	fd_set client_sockets, ready_sockets;
+	fd_set client_sockets, read_sockets, write_sockets;
 	int max_fd = socket_fd;
 	t_client *user_list = NULL;
 	t_client *aux = NULL;
@@ -174,22 +146,18 @@ int main_loop(int socket_fd)
 	int id = 0;
 	char buffer[BUFFER_SIZE];
 
-	memset(&client_sockets, 0, sizeof(client_sockets));
 	FD_ZERO(&client_sockets);
 	FD_SET(socket_fd, &client_sockets);
 	while (1)
 	{
-		ready_sockets = client_sockets;
-		if (select(max_fd + 1, &ready_sockets, NULL, NULL, NULL) < 0)
-		{
-			free_list(&user_list);
-			close(socket_fd);
-			return throw_error("Fatal error\n");
-		}
+		read_sockets = client_sockets;
+		write_sockets = client_sockets;
+		select(max_fd + 1, &read_sockets, &write_sockets, NULL, NULL);
+		
 		// Check fd activity
 		for (int i = 0; i <= max_fd; i++)
 		{
-			if (FD_ISSET(i, &ready_sockets) > 0)
+			if (FD_ISSET(i, &read_sockets) > 0)
 			{
 				memset(buffer, 0, BUFFER_SIZE);
 				// join client
@@ -197,80 +165,53 @@ int main_loop(int socket_fd)
 				{
 					new_fd = accept(socket_fd, NULL, NULL);
 					if (new_fd == -1)
-					{
-						free_list(&user_list);
-						close(socket_fd);
-						return throw_error("Fatal error\n");
-					}
+						continue ;
 					lst_add_back(&user_list, lst_new(new_fd, id));
 					FD_SET(new_fd, &client_sockets);
 					sprintf(buffer, "server: client %d just arrived\n", id++);
-					if (send_msg_to_all(user_list, new_fd, buffer) == 1)
-					{
-						free_list(&user_list);
-						close(socket_fd);
-						return throw_error("Fatal error\n");
-					}
+					send_msg_to_all(user_list, new_fd, buffer, write_sockets);
 					max_fd = find_max_fd(&user_list, socket_fd);
 				}
 				else
 				{
 					// Recv
-					len = recv(i, buffer, BUFFER_SIZE, 0);
-					switch (len)
-					{
-						// error
-						case -1:
-						{
-							free_list(&user_list);
-							close(socket_fd);
-							return throw_error("Fatal error\n");
-						}
+					len = 1000;
+					while (len == 1000)
+						len = recv(i, buffer + strlen(buffer), 1000, 0);
+					
 						// desconectar
-						case 0:
+					if (len <= 0 && *buffer == 0)
+					{
+						aux = find_in_list(&user_list, i);
+						sprintf(buffer, "server: client %d just left\n", aux->id);
+						FD_CLR(i, &client_sockets);
+						close(i);
+						remove_from_list(&user_list, i);
+						send_msg_to_all(user_list, i, buffer, write_sockets);
+						max_fd = find_max_fd(&user_list, socket_fd);
+					}
+					// enviar msg
+					else
+					{
+						char msg[BUFFER_SIZE + 100];
+						char tmp[BUFFER_SIZE];
+						aux = find_in_list(&user_list, i);
+						int j = 0;
+						int k = 0;
+						memset(tmp, 0, BUFFER_SIZE);
+						while (j < len)
 						{
-							aux = find_in_list(&user_list, i);
-							sprintf(buffer, "server: client %d just left\n", aux->id);
-							FD_CLR(i, &client_sockets);
-							close(i);
-							remove_from_list(&user_list, i);
-							if (send_msg_to_all(user_list, i, buffer) == 1)
+							tmp[k] = buffer[j];
+							k++;
+							if (buffer[j] == '\n')
 							{
-								free_list(&user_list);
-								close(socket_fd);
-								return throw_error("Fatal error\n");
+								sprintf(msg, "client %d: %s", aux->id, tmp);
+								send_msg_to_all(user_list, i, msg, write_sockets);
+								k = 0;
+								memset(tmp, 0, BUFFER_SIZE);
+								memset(msg, 0, BUFFER_SIZE);
 							}
-							max_fd = find_max_fd(&user_list, socket_fd);
-							break;
-						}
-						// enviar msg
-						default:
-						{
-							char msg[BUFFER_SIZE + 100];
-							char tmp[BUFFER_SIZE];
-							aux = find_in_list(&user_list, i);
-							int j = 0;
-							int k = 0;
-							memset(tmp, 0, BUFFER_SIZE);
-							while (j < len)
-							{
-								tmp[k] = buffer[j];
-								k++;
-								if (buffer[j] == '\n')
-								{
-									sprintf(msg, "client %d: %s", aux->id, tmp);
-									if (send_msg_to_all(user_list, i, msg) == 1)
-									{
-										free_list(&user_list);
-										close(socket_fd);
-										return throw_error("Fatal error\n");
-									}
-									k = 0;
-									memset(tmp, 0, BUFFER_SIZE);
-									memset(msg, 0, BUFFER_SIZE);
-								}
-								j++;
-							}
+							j++;
 						}
 					}
 				}
